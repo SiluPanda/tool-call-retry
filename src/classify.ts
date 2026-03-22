@@ -77,7 +77,7 @@ export function classifyError(error: unknown, custom?: ErrorClassifier): ErrorCl
         statusCode,
       };
     }
-    if ([500, 502, 503, 504].includes(statusCode)) {
+    if ([500, 502, 503, 504, 529].includes(statusCode)) {
       return {
         category: 'retriable',
         code: 'SERVER_ERROR',
@@ -90,14 +90,20 @@ export function classifyError(error: unknown, custom?: ErrorClassifier): ErrorCl
   // 4. Node.js network error codes
   const code = getErrorCode(error);
   if (code) {
-    if (['ECONNREFUSED', 'ECONNRESET', 'EPIPE'].includes(code)) {
+    if (['ECONNREFUSED', 'ECONNRESET', 'EPIPE', 'EHOSTUNREACH'].includes(code)) {
       return { category: 'retriable', code: 'NETWORK_ERROR', message: getErrorMessage(error) };
     }
     if (code === 'ETIMEDOUT') {
       return { category: 'timeout', code: 'TIMEOUT', message: getErrorMessage(error) };
     }
-    if (['ENOTFOUND', 'EAI_AGAIN'].includes(code)) {
+    if (code === 'EAI_AGAIN') {
       return { category: 'retriable', code: 'DNS_ERROR', message: getErrorMessage(error) };
+    }
+    if (code === 'ENOTFOUND') {
+      return { category: 'non-retriable', code: 'DNS_ERROR', message: getErrorMessage(error) };
+    }
+    if (['CERT_HAS_EXPIRED', 'UNABLE_TO_VERIFY_LEAF_SIGNATURE'].includes(code)) {
+      return { category: 'non-retriable', code: 'TLS_ERROR', message: getErrorMessage(error) };
     }
   }
 

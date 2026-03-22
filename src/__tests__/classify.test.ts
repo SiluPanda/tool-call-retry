@@ -98,10 +98,10 @@ describe('classifyError', () => {
     expect(result.code).toBe('TIMEOUT');
   });
 
-  it('classifies ENOTFOUND as retriable DNS error', () => {
+  it('classifies ENOTFOUND as non-retriable DNS error', () => {
     const err = Object.assign(new Error('getaddrinfo ENOTFOUND'), { code: 'ENOTFOUND' });
     const result = classifyError(err);
-    expect(result.category).toBe('retriable');
+    expect(result.category).toBe('non-retriable');
     expect(result.code).toBe('DNS_ERROR');
   });
 
@@ -110,6 +110,35 @@ describe('classifyError', () => {
     const result = classifyError(err);
     expect(result.category).toBe('retriable');
     expect(result.code).toBe('DNS_ERROR');
+  });
+
+  it('classifies EHOSTUNREACH as retriable network error', () => {
+    const err = Object.assign(new Error('No route to host'), { code: 'EHOSTUNREACH' });
+    const result = classifyError(err);
+    expect(result.category).toBe('retriable');
+    expect(result.code).toBe('NETWORK_ERROR');
+  });
+
+  it('classifies CERT_HAS_EXPIRED as non-retriable TLS error', () => {
+    const err = Object.assign(new Error('certificate has expired'), { code: 'CERT_HAS_EXPIRED' });
+    const result = classifyError(err);
+    expect(result.category).toBe('non-retriable');
+    expect(result.code).toBe('TLS_ERROR');
+  });
+
+  it('classifies UNABLE_TO_VERIFY_LEAF_SIGNATURE as non-retriable TLS error', () => {
+    const err = Object.assign(new Error('unable to verify leaf signature'), { code: 'UNABLE_TO_VERIFY_LEAF_SIGNATURE' });
+    const result = classifyError(err);
+    expect(result.category).toBe('non-retriable');
+    expect(result.code).toBe('TLS_ERROR');
+  });
+
+  it('classifies HTTP 529 as retriable (Anthropic overloaded)', () => {
+    const err = Object.assign(new Error('Overloaded'), { status: 529 });
+    const result = classifyError(err);
+    expect(result.category).toBe('retriable');
+    expect(result.code).toBe('SERVER_ERROR');
+    expect(result.statusCode).toBe(529);
   });
 
   it('classifies message containing "timeout" as timeout', () => {
