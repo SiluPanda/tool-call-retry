@@ -3,6 +3,7 @@
 AI-specific retry wrapper with circuit breaker for LLM tool calls. Zero external runtime dependencies.
 
 [![npm version](https://img.shields.io/npm/v/tool-call-retry.svg)](https://www.npmjs.com/package/tool-call-retry)
+[![npm downloads](https://img.shields.io/npm/dt/tool-call-retry.svg)](https://www.npmjs.com/package/tool-call-retry)
 [![license](https://img.shields.io/npm/l/tool-call-retry.svg)](https://github.com/SiluPanda/tool-call-retry/blob/master/LICENSE)
 [![node](https://img.shields.io/node/v/tool-call-retry.svg)](https://nodejs.org)
 [![types](https://img.shields.io/npm/types/tool-call-retry.svg)](https://www.npmjs.com/package/tool-call-retry)
