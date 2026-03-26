@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { withRetry, wrapTools, createRetryPolicy } from '../retry.js';
+import { createCircuitBreaker } from '../circuit-breaker.js';
 import type { LLMFormattedError } from '../types.js';
 
 // Speed up tests by using fake timers
@@ -267,6 +268,42 @@ describe('withRetry', () => {
       const result = await withRetry(fn, { circuitBreaker: false });
       expect(result).toBe('result');
     });
+
+    it('uses a shared circuitBreakerInstance across multiple withRetry calls', async () => {
+      const retriableErr = Object.assign(new Error('Server Error'), { status: 503 });
+      const cb = createCircuitBreaker({ failureThreshold: 2, resetTimeoutMs: 99999 });
+
+      // First call: fails once, opens the breaker (threshold=2, this contributes 1 failure)
+      const failingFn1 = vi.fn().mockRejectedValue(retriableErr);
+      const promise1 = withRetry(failingFn1, {
+        circuitBreakerInstance: cb,
+        policy: { maxRetries: 0, initialDelayMs: 10, jitter: 'none', strategy: 'fixed' },
+        onPermanentFailure: 'return-error',
+      });
+      await vi.runAllTimersAsync();
+      await promise1;
+      expect(cb.state).toBe('closed'); // 1 failure, threshold is 2
+
+      // Second call: fails once more, now breaker should open (2 total failures)
+      const failingFn2 = vi.fn().mockRejectedValue(retriableErr);
+      const promise2 = withRetry(failingFn2, {
+        circuitBreakerInstance: cb,
+        policy: { maxRetries: 0, initialDelayMs: 10, jitter: 'none', strategy: 'fixed' },
+        onPermanentFailure: 'return-error',
+      });
+      await vi.runAllTimersAsync();
+      await promise2;
+      expect(cb.state).toBe('open'); // 2 failures total across calls
+
+      // Third call: should be blocked immediately by the open breaker
+      const successFn = vi.fn().mockResolvedValue('should not reach');
+      const result = await withRetry(successFn, {
+        circuitBreakerInstance: cb,
+        onPermanentFailure: 'return-error',
+      });
+      expect(isFormattedError(result)).toBe(true);
+      expect(successFn).not.toHaveBeenCalled();
+    });
   });
 });
 
@@ -320,5 +357,61 @@ describe('wrapTools', () => {
     const result = await wrapped.search_tool({});
     expect(isFormattedError(result)).toBe(true);
     expect((result as LLMFormattedError).tool).toBe('search_tool');
+  });
+
+  it('shares a single circuit breaker across all wrapped tools', async () => {
+    const retriableErr = Object.assign(new Error('Server Error'), { status: 503 });
+
+    // Both tools always fail
+    const toolA = vi.fn().mockRejectedValue(retriableErr);
+    const toolB = vi.fn().mockRejectedValue(retriableErr);
+
+    const tools = { tool_a: toolA, tool_b: toolB };
+    const wrapped = wrapTools(tools, {
+      circuitBreaker: { failureThreshold: 2, resetTimeoutMs: 99999 },
+      policy: { maxRetries: 0, initialDelayMs: 10, jitter: 'none', strategy: 'fixed' },
+      onPermanentFailure: 'return-error',
+    });
+
+    // First call to tool_a: 1 failure recorded on the shared breaker
+    const r1 = wrapped.tool_a({});
+    await vi.runAllTimersAsync();
+    await r1;
+
+    // Second call to tool_b: 2nd failure opens the shared breaker
+    const r2 = wrapped.tool_b({});
+    await vi.runAllTimersAsync();
+    await r2;
+
+    // Third call to tool_a: breaker is open, tool_a should be blocked without calling fn
+    toolA.mockClear();
+    const r3 = await wrapped.tool_a({});
+    expect(isFormattedError(r3)).toBe(true);
+    expect(toolA).not.toHaveBeenCalled();
+  });
+});
+
+describe('sleep abort listener cleanup', () => {
+  it('removes the abort listener when the timer fires normally', async () => {
+    const ac = new AbortController();
+    const removeSpy = vi.spyOn(ac.signal, 'removeEventListener');
+
+    // Trigger a retry that sleeps with the signal, then succeeds
+    const retriableErr = Object.assign(new Error('Server Error'), { status: 503 });
+    const fn = vi.fn()
+      .mockRejectedValueOnce(retriableErr)
+      .mockResolvedValue('ok');
+
+    const promise = withRetry(fn, {
+      circuitBreaker: false,
+      signal: ac.signal,
+      policy: { maxRetries: 3, initialDelayMs: 50, jitter: 'none', strategy: 'fixed' },
+    });
+
+    await vi.runAllTimersAsync();
+    await promise;
+
+    // The sleep function should have cleaned up the abort listener
+    expect(removeSpy).toHaveBeenCalledWith('abort', expect.any(Function));
   });
 });

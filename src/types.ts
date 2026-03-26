@@ -46,6 +46,7 @@ export interface ToolRetryOptions {
   policy?: RetryPolicy;
   maxRetries?: number;        // shorthand
   circuitBreaker?: CircuitBreakerConfig | false;
+  circuitBreakerInstance?: import('./circuit-breaker.js').CircuitBreakerInstance;
   classifyError?: ErrorClassifier;
   onPermanentFailure?: 'throw' | 'return-error';
   signal?: AbortSignal;
