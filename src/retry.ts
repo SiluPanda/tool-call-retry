@@ -22,13 +22,18 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
       reject(new DOMException('Aborted', 'AbortError'));
       return;
     }
-    const timer = setTimeout(resolve, ms);
     if (signal) {
       const onAbort = () => {
         clearTimeout(timer);
         reject(new DOMException('Aborted', 'AbortError'));
       };
+      const timer = setTimeout(() => {
+        signal.removeEventListener('abort', onAbort);
+        resolve();
+      }, ms);
       signal.addEventListener('abort', onAbort, { once: true });
+    } else {
+      setTimeout(resolve, ms);
     }
   });
 }
@@ -43,11 +48,12 @@ export async function withRetry<T>(
   });
 
   const cb =
-    options?.circuitBreaker !== false
+    options?.circuitBreakerInstance ??
+    (options?.circuitBreaker !== false
       ? createCircuitBreaker(
           options?.circuitBreaker === undefined ? undefined : options.circuitBreaker
         )
-      : null;
+      : null);
 
   const startTime = Date.now();
   let prevDelay = policy.initialDelayMs;
@@ -137,11 +143,26 @@ export function wrapTools<T extends Record<string, (args: unknown) => Promise<un
   tools: T,
   options?: ToolRetryOptions
 ): T {
+  // Create one shared circuit breaker for all wrapped tools so failure state
+  // is tracked across calls instead of being reset each time.
+  const sharedCb =
+    options?.circuitBreakerInstance ??
+    (options?.circuitBreaker !== false
+      ? createCircuitBreaker(
+          options?.circuitBreaker === undefined ? undefined : options.circuitBreaker
+        )
+      : undefined);
+
   const wrapped: Record<string, (args: unknown) => Promise<unknown>> = {};
   for (const key of Object.keys(tools)) {
     const original = tools[key];
     wrapped[key] = (args: unknown) =>
-      withRetry(() => original(args), { ...options, toolName: key }) as Promise<unknown>;
+      withRetry(() => original(args), {
+        ...options,
+        toolName: key,
+        // Pass the shared instance so withRetry reuses it instead of creating a new one.
+        ...(sharedCb ? { circuitBreakerInstance: sharedCb } : {}),
+      }) as Promise<unknown>;
   }
   return wrapped as T;
 }
